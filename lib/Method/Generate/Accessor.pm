@@ -109,11 +109,15 @@ sub generate_method {
   if (my $reader = $spec->{reader}) {
     _die_overwrite($into, $reader, 'a reader')
       if !$spec->{allow_overwrite} && defined &{"${into}::${reader}"};
-    if (_CAN_XSACCESSOR && $CAN_HAZ_XS && $self->is_simple_get($name, $spec)) {
-      $methods{$reader} = $self->_generate_xs(
-        getters => $into, $reader, $name, $spec
-      );
-    } else {
+    (
+      _CAN_XSACCESSOR
+      && $self->is_simple_get($name, $spec)
+      && eval {
+        $methods{$reader} = $self->_generate_xs(
+          getters => $into, $reader, $name, $spec
+        );
+      }
+    ) or do {
       $self->{captures} = {};
       $methods{$reader} =
         quote_sub "${into}::${reader}"
@@ -122,21 +126,21 @@ sub generate_method {
           => delete $self->{captures}
           => { no_defer => 1 }
         ;
-    }
+    };
   }
   if (my $accessor = $spec->{accessor}) {
     _die_overwrite($into, $accessor, 'an accessor')
       if !$spec->{allow_overwrite} && defined &{"${into}::${accessor}"};
-    if (
+    (
       _CAN_XSACCESSOR
-      && $CAN_HAZ_XS
       && $self->is_simple_get($name, $spec)
       && $self->is_simple_set($name, $spec)
-    ) {
-      $methods{$accessor} = $self->_generate_xs(
-        accessors => $into, $accessor, $name, $spec
-      );
-    } else {
+      && eval {
+        $methods{$accessor} = $self->_generate_xs(
+          accessors => $into, $accessor, $name, $spec
+        );
+      }
+    ) or do {
       $self->{captures} = {};
       $methods{$accessor} =
         quote_sub "${into}::${accessor}"
@@ -144,20 +148,20 @@ sub generate_method {
           => delete $self->{captures}
           => { no_defer => 1 }
         ;
-    }
+    };
   }
   if (my $writer = $spec->{writer}) {
     _die_overwrite($into, $writer, 'a writer')
       if !$spec->{allow_overwrite} && defined &{"${into}::${writer}"};
-    if (
+    (
       _CAN_XSACCESSOR
-      && $CAN_HAZ_XS
       && $self->is_simple_set($name, $spec)
-    ) {
-      $methods{$writer} = $self->_generate_xs(
-        setters => $into, $writer, $name, $spec
-      );
-    } else {
+      && eval {
+        $methods{$writer} = $self->_generate_xs(
+          setters => $into, $writer, $name, $spec
+        );
+      }
+    ) or do {
       $self->{captures} = {};
       $methods{$writer} =
         quote_sub "${into}::${writer}"
@@ -165,21 +169,25 @@ sub generate_method {
           => delete $self->{captures}
           => { no_defer => 1 }
         ;
-    }
+    };
   }
   if (my $pred = $spec->{predicate}) {
     _die_overwrite($into, $pred, 'a predicate')
       if !$spec->{allow_overwrite} && defined &{"${into}::${pred}"};
-    if (_CAN_XSACCESSOR && _CAN_XSACCESSOR_PRED && $CAN_HAZ_XS) {
-      $methods{$pred} = $self->_generate_xs(
-        exists_predicates => $into, $pred, $name, $spec
-      );
-    } else {
+    (
+      _CAN_XSACCESSOR
+      && _CAN_XSACCESSOR_PRED
+      && eval {
+        $methods{$pred} = $self->_generate_xs(
+          exists_predicates => $into, $pred, $name, $spec
+        );
+      }
+    ) or do {
       $methods{$pred} =
         quote_sub "${into}::${pred}" =>
           '    '.$self->_generate_simple_has('$_[0]', $name, $spec)."\n"
         ;
-    }
+    };
   }
   if (my $pred = $spec->{builder_sub}) {
     _install_coderef( "${into}::$spec->{builder}" => $spec->{builder_sub} );
