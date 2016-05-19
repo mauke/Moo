@@ -1,8 +1,8 @@
 package Moo::HandleMoose;
 use Moo::_strictures;
 no warnings 'once';
-use Moo::_Utils qw(_getstash);
-use Sub::Quote qw(quotify);
+use Moo::_Utils qw(_getstash _load_module);
+use Sub::Quote qw(quotify sanitize_identifier quote_sub);
 use Carp qw(croak);
 
 our %TYPE_MAP;
@@ -220,6 +220,66 @@ sub inject_real_metaclass_for {
       do { no warnings 'once'; keys %{$Moo::Role::APPLIED_TO{$name}} };
   $DID_INJECT{$name} = 1;
   $meta;
+}
+
+sub find_meta {
+  my ($name) = @_;
+  my $meta;
+  (
+    $INC{"Class/MOP.pm"}
+    and $meta = Class::MOP::class_of($name)
+    and ref $meta ne 'Moo::HandleMoose::FakeMetaClass'
+    and $meta->isa('Moose::Meta::Role')
+  )
+  or (
+    Mouse::Util->can('find_meta')
+    and $meta = Mouse::Util::find_meta($name)
+    and $meta->isa('Mouse::Meta::Role')
+  )
+  or return undef;
+  $meta;
+}
+
+sub inhale_attributes {
+  my ($meta) = @_;
+  my $is_mouse = !$meta->isa('Class::MOP::Package');
+  [ map +($_ => do {
+    my $attr = $meta->get_attribute($_);
+    my $spec = {
+      $is_mouse ? %$attr : %{$attr->original_options}
+    };
+
+    if ($spec->{isa}) {
+      my $get_constraint = do {
+        my $pkg = $is_mouse
+                    ? 'Mouse::Util::TypeConstraints'
+                    : 'Moose::Util::TypeConstraints';
+        _load_module($pkg);
+        $pkg->can('find_or_create_isa_type_constraint');
+      };
+
+      my $tc = $get_constraint->($spec->{isa});
+      my $check = $tc->_compiled_type_constraint;
+      my $tc_var = '$_check_for_'.sanitize_identifier($tc->name);
+
+      $spec->{isa} = quote_sub
+        qq{
+          &${tc_var} or Carp::croak "Type constraint failed for \$_[0]"
+        },
+        { $tc_var => \$check },
+        {
+          package => $meta->name,
+        },
+      ;
+
+      # Mouse has _compiled_type_coercion straight on the TC object
+      if ($spec->{coerce}) {
+        $spec->{coerce}
+          = ($tc->can('coercion') ? $tc->coercion : $tc)->_compiled_type_coercion;
+      }
+    }
+    $spec;
+  }), $meta->get_attribute_list ];
 }
 
 1;

@@ -12,7 +12,6 @@ use Moo::_Utils qw(
   _unimport_coderefs
 );
 use Sub::Defer ();
-use Sub::Quote qw(quote_sub sanitize_identifier);
 use Role::Tiny ();
 use Carp qw(croak);
 BEGIN { our @ISA = qw(Role::Tiny) }
@@ -141,21 +140,12 @@ sub _inhale_if_moose {
   my ($self, $role) = @_;
   return
     if $self->SUPER::is_role($role);
+  return
+    unless $INC{'Moose/Meta/Role.pm'} or $INC{'Mouse/Meta/Role.pm'};
 
-  my $meta;
-  (
-    $INC{"Moose/Meta/Role.pm"}
-    and $meta = Class::MOP::class_of($role)
-    and ref $meta ne 'Moo::HandleMoose::FakeMetaClass'
-    and $meta->isa('Moose::Meta::Role')
-  )
-  or (
-    Mouse::Util->can('find_meta')
-    and $meta = Mouse::Util::find_meta($role)
-    and $meta->isa('Mouse::Meta::Role')
-  )
-  or return;
-
+  require Moo::HandleMoose;
+  my $meta = Moo::HandleMoose::find_meta($role)
+    or return;
   my $is_mouse = $meta->isa('Mouse::Meta::Role');
   $INFO{$role}{methods} = {
     map +($_ => $role->can($_)),
@@ -168,46 +158,7 @@ sub _inhale_if_moose {
     map +($_->name => 1), $meta->calculate_all_roles
   };
   $INFO{$role}{requires} = [ $meta->get_required_method_list ];
-  $INFO{$role}{attributes} = [
-    map +($_ => do {
-      my $attr = $meta->get_attribute($_);
-      my $spec = { %{ $is_mouse ? $attr : $attr->original_options } };
-
-      if ($spec->{isa}) {
-
-        my $get_constraint = do {
-          my $pkg = $is_mouse
-                      ? 'Mouse::Util::TypeConstraints'
-                      : 'Moose::Util::TypeConstraints';
-          _load_module($pkg);
-          $pkg->can('find_or_create_isa_type_constraint');
-        };
-
-        my $tc = $get_constraint->($spec->{isa});
-        my $check = $tc->_compiled_type_constraint;
-        my $tc_var = '$_check_for_'.sanitize_identifier($tc->name);
-
-        $spec->{isa} = quote_sub
-          qq{
-            &${tc_var} or Carp::croak "Type constraint failed for \$_[0]"
-          },
-          { $tc_var => \$check },
-          {
-            package => $role,
-          },
-        ;
-
-        if ($spec->{coerce}) {
-
-            # Mouse has _compiled_type_coercion straight on the TC object
-            $spec->{coerce} = $tc->${\(
-              $tc->can('coercion')||sub { $_[0] }
-            )}->_compiled_type_coercion;
-        }
-      }
-      $spec;
-    }), $meta->get_attribute_list
-  ];
+  $INFO{$role}{attributes} = Moo::HandleMoose::inhale_attributes($meta);
   my $mods = $INFO{$role}{modifiers} = [];
   foreach my $type (qw(before after around)) {
     # Mouse pokes its own internals so we have to fall back to doing
