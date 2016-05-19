@@ -123,7 +123,15 @@ sub _set_superclasses {
        ->register_attribute_specs(%{$old->all_attribute_specs});
   }
   elsif (!$target->isa('Moo::Object')) {
-    Moo->_constructor_maker_for($target);
+    my $con = Moo->_constructor_maker_for($target);
+    if (@_ && ($INC{'Class/MOP/Class.pm'} || Mouse::Util->can('find_meta'))) {
+      require Moo::HandleMoose;
+      if (my $meta = Moo::HandleMoose::find_meta($_[0], 'class')) {
+        $con->register_attribute_specs(
+          @{ Moo::HandleMoose::inhale_attributes($meta) }
+        );
+      }
+    }
   }
   no warnings 'once'; # piss off. -- mst
   $Moo::HandleMoose::MOUSE{$target} = [
